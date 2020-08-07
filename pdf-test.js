@@ -34,7 +34,7 @@ const data = pdf.render();
 
 const t1=Date.now();
 
-console.log(`total generation time: ${t1-t0} ms`);
+console.log(`total generation time: ${t1-t0} ms `);
 
 fs.writeFile('./output.pdf', data, (err) => {
     if (err) {
