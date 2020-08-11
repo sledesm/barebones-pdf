@@ -1,5 +1,15 @@
 const fs=require('fs');
 const path=require('path');
+const symbolEncoding=require('./encoding_metrics/symbol-encoding.json');
+
+const symbolMap={};
+
+Object.keys(symbolEncoding).forEach((key)=>{
+    const [,name]=symbolEncoding[key];
+    if (!symbolMap[name]){
+        symbolMap[name]=+key;
+    }
+});
 
 const files=process.argv.slice(2);
 const loop=(files,index,callback)=>{
@@ -18,23 +28,33 @@ const loop=(files,index,callback)=>{
         }
         const font=JSON.parse(data.toString());
         const res=[];
-        for (let i=0; i<font.length; i++){
-            const {charCode,width}=font[i];
+        const charMetrics=font['CharMetrics'];
+
+        for (let i=0; i<charMetrics.length; i++){
+            const {'WX':width,'N':name,'B':bbox}=charMetrics[i];
+            const charCode=name.length===1?name.charCodeAt(0):symbolMap[name];
             if (charCode>0){
-                res.push(charCode,width);
+                res.push({charCode,width,bbox});
             }
         }
-        const buf=Buffer.alloc(res.length*2);
+        const recordSize=12;
+        // We have to reserve 6 fields
+        // charCode, width, minx,miny,maxx,maxy
+        const buf=new ArrayBuffer(res.length*recordSize);
+        const dataView=new DataView(buf)
         for (let i=0; i<res.length; i++){
-            const v=res[i];
-            const hi=(v>>8)&0xFF;
-            const lo=v&0xFF;
-            buf[i*2]=hi;
-            buf[i*2+1]=lo;
+            const {charCode,width,bbox}=res[i];
+            dataView.setInt16(i*recordSize,charCode);
+            dataView.setInt16(i*recordSize+2,width);
+            dataView.setInt16(i*recordSize+4,bbox[0]);
+            dataView.setInt16(i*recordSize+6,bbox[1]);
+            dataView.setInt16(i*recordSize+8,bbox[2]);
+            dataView.setInt16(i*recordSize+10,bbox[3]);
         }
         
         const {dir,name} = path.parse(filename);
-        const b64=buf.toString('base64');
+        const buffer=Buffer.from(buf);
+        const b64=buffer.toString('base64');
         const outputFile=path.join(dir,'min',`${name}.json`);
         const output=JSON.stringify({data:b64});
         fs.writeFile(outputFile,output,(err)=>{
