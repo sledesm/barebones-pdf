@@ -3,10 +3,10 @@ const instancePDF = require("./pdf");
 
 const pdf = instancePDF();
 
-const NUMX = 200;
-const NUMY = 200;
-const DIAMETER = 2;
-const SPACING = 2.2;
+const NUMX = 10;
+const NUMY = 10;
+const DIAMETER = 20;
+const SPACING = 22;
 
 const t0 = Date.now();
 
@@ -28,6 +28,25 @@ const addTexts = ({ text, font, size, box, alignments }) => {
   }
 };
 
+
+pdf.setFillColor("#C0C0C0");
+pdf.setStrokeColor("#000000");
+
+pdf.addPolygon({
+  path: [
+    { x: box.minx, y: box.miny },
+    { x: box.maxx, y: box.miny },
+    { x: box.maxx, y: box.maxy },
+    { x: box.minx, y: box.maxy },
+  ],
+  closed:true,
+  fill:true,
+  stroke:true,
+});
+
+pdf.setFillColor("#000000");
+pdf.setStrokeColor("#000000");
+
 addTexts({
   text: "Hello world",
   font: "helvetica",
@@ -36,15 +55,6 @@ addTexts({
   alignments: ["lt", "lb", "lc", "rt", "rb", "rc", "ct", "cb", "cc"],
 });
 
-pdf.addLine({
-  path: [
-    { x: box.minx, y: box.miny },
-    { x: box.maxx, y: box.miny },
-    { x: box.maxx, y: box.maxy },
-    { x: box.minx, y: box.maxy },
-    { x: box.minx, y: box.miny },
-  ],
-});
 
 pdf.setFillColor("#FF0000");
 pdf.setStrokeColor("#00FF00");
@@ -64,7 +74,6 @@ for (let x = 0; x < NUMX; x++) {
   for (let y = 0; y < NUMY; y++) {
     const cx = x * SPACING;
     const cy = y * SPACING;
-    //pdf.addCircle(cx, cy, DIAMETER, false, true);
     pdf.addText({
       text: ((counter++)%100).toString(),
       font: "helvetica",
@@ -85,6 +94,16 @@ pdf.setStrokeColor("#00FF00");
 pdf.addCircle(100, 300, 20, true, true);
 pdf.addCircle(120, 300, 20, true, false);
 pdf.addCircle(140, 300, 20, false, true);
+
+pdf.setFillColor("#008080");
+pdf.setStrokeColor("#00FF00");
+
+pdf.addRectangle(100,500,80,40,45,true,true);
+
+pdf.setFillColor("#0000FF");
+pdf.setStrokeColor("#00FF00");
+
+pdf.addOval(100,500,80,40,45,true,true);
 
 const data = pdf.render();
 

@@ -46,6 +46,14 @@
 const { encodeUTF8 } = require("./io");
 const { measureText: fontsMeasureText } = require("./fonts");
 
+const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
+const SQUARE_PATH = [
+  { x: -0.5, y: -0.5 },
+  { x: 0.5, y: -0.5 },
+  { x: 0.5, y: 0.5 },
+  { x: -0.5, y: 0.5 },
+];
+
 const instancePDF = ({ defaultSize } = {}) => {
   const _model = {
     // Dictionary of logic name and object (logic name will not be used in the final PDF output)
@@ -447,6 +455,28 @@ const instancePDF = ({ defaultSize } = {}) => {
     addToStream(imageObj, resource);
   };
 
+  const matrixMultiply = (m1, m2) => {
+    const [a, b, c, d, e, f] = m1;
+    const [g, h, i, j, k, l] = m2;
+    return [
+      a * g + c * h,
+      b * g + d * h,
+      a * i + c * j,
+      b * i + d * j,
+      a * k + c * l + e,
+      b * k + d * l + f,
+    ];
+  };
+
+  const matrixByPoint = (m, p) => {
+    const [a, b, c, d, e, f] = m;
+    const { x, y } = p;
+    return {
+      x: a * x + c * y + e,
+      y: b * x + d * y + f,
+    };
+  };
+
   const matrixToString = (matrix) => {
     if (matrix.length !== 6) {
       throw new Error("Invalid matrix");
@@ -492,12 +522,9 @@ const instancePDF = ({ defaultSize } = {}) => {
     return res;
   };
 
-  const addCircle = (x, y, diameter, stroke = true, fill = false) => {
-    const cFactor = 0.551915024494;
-    const r = diameter * 0.5;
-    const c = cFactor * r;
-
+  const getDrawCommand = (stroke, fill) => {
     let endCmd;
+
     if (fill) {
       if (stroke) {
         endCmd = "b";
@@ -507,6 +534,15 @@ const instancePDF = ({ defaultSize } = {}) => {
     } else {
       endCmd = "S";
     }
+    return endCmd;
+  };
+
+  const addCircle = (x, y, diameter, stroke = true, fill = false) => {
+    const cFactor = 0.551915024494;
+    const r = diameter * 0.5;
+    const c = cFactor * r;
+
+    const drawCmd = getDrawCommand(stroke, fill);
 
     // Below string is a little bit cryptic, but it comes directly from an approximation of bezier curves to circles as described by the literature
     // [0,1] [c,1] [1,c] [1,0] --> first quadrant
@@ -522,26 +558,75 @@ const instancePDF = ({ defaultSize } = {}) => {
       y - c
     )} ${n(x - r)} ${n(y)} c ${n(x - r)} ${n(y + c)} ${n(x - c)} ${n(
       y + r
-    )} ${n(x)} ${n(y + r)} c ${endCmd}\n`;
+    )} ${n(x)} ${n(y + r)} c ${drawCmd}\n`;
     addToStream(_curContent, str);
   };
 
-  const addLine = ({ matrix, path, closed, renderOptions }) => {
-    const { clipPath, dontQ } = renderOptions || {};
+  const addOval = (cx, cy, width, height, alpha, stroke, fill) => {
+    const angle = (alpha * Math.PI) / 180;
+    const matrixScale = [width, 0, 0, height, 0, 0];
+    const matrixRotate = [
+      Math.cos(angle),
+      Math.sin(angle),
+      -Math.sin(angle),
+      Math.cos(angle),
+      0,
+      0,
+    ];
+    const matrixTranslate = [1, 0, 0, 1, cx, cy];
+    const finalMatrix = matrixMultiply(
+      matrixTranslate,
+      matrixMultiply(matrixRotate, matrixScale)
+    );
+    const finalMatrixStr = matrixToString(finalMatrix);
+    const maxScale = Math.max(width, height);
+    const content = `\nq\n${1 / maxScale} w${finalMatrixStr}`;
+    addToStream(_curContent, content);
+    addCircle(0, 0, 1, stroke, fill);
+    addToStream(_curContent, "\nQ\n");
+  };
 
+  const addRectangle = (cx, cy, width, height, alpha, stroke, fill) => {
+    const angle = (alpha * Math.PI) / 180;
+    const strokeWidth = 1;
+    const matrixRotate = [
+      Math.cos(angle),
+      Math.sin(angle),
+      -Math.sin(angle),
+      Math.cos(angle),
+      0,
+      0,
+    ];
+    const matrixTranslate = [1, 0, 0, 1, cx, cy];
+
+    const matrixScale = [width, 0, 0, height, 0, 0];
+    const finalMatrix = matrixMultiply(
+      matrixTranslate,
+      matrixMultiply(matrixRotate, matrixScale)
+    );
+    addPolygon({
+      path: SQUARE_PATH,
+      matrix: finalMatrix,
+      closed: true,
+      fill,
+      stroke,
+    });
+  };
+
+  const addPolygon = ({
+    matrix = IDENTITY_MATRIX,
+    path,
+    closed,
+    fill = false,
+    stroke = true,
+    clip,
+  }) => {
     let str = "";
 
-    if (!dontQ) {
-      str += " q";
-    }
-    if (matrix) {
-      str += matrixToString(matrix);
-    }
-    str += "\n";
     for (let i = 0; i < path.length; i++) {
       const point = path[i];
-
-      str += ` ${point.x.toFixed(3)} ${point.y.toFixed(3)}`;
+      const q = matrixByPoint(matrix, point);
+      str += ` ${q.x.toFixed(3)} ${q.y.toFixed(3)}`;
       if (i === 0) {
         str += " m";
       } else {
@@ -552,17 +637,15 @@ const instancePDF = ({ defaultSize } = {}) => {
       if (closed) {
         str += " h";
       }
-      if (!clipPath) {
-        str += " S";
-      } else {
+      if (clip) {
         str += " W n";
+      } else {
+        const drawCmd = getDrawCommand(stroke, fill);
+        str += ` ${drawCmd}`;
       }
     }
-    if (!dontQ) {
-      str += " Q\n";
-    } else {
-      str += "\n";
-    }
+
+    str += "\n";
     addToStream(_curContent, str);
   };
 
@@ -573,7 +656,7 @@ const instancePDF = ({ defaultSize } = {}) => {
 
     if (clipPath) {
       addToStream(_curContent, " q");
-      addLine({
+      addPolygon({
         pageName,
         matrix: clipPath.matrix,
         path: clipPath.path,
@@ -650,8 +733,8 @@ const instancePDF = ({ defaultSize } = {}) => {
         break;
     }
     const fontHandle = _curFont.handle;
-    const str = `BT /${fontHandle} ${size} Tf\n${hOffset} ${vOffset} Td\n(${text}) Tj\nET\n`;
-
+    const str = `\nBT /${fontHandle} ${size} Tf\n${hOffset} ${vOffset} Td\n(${text}) Tj\nET\n`;
+    console.log(`adding TExt with string ${str}`);
     addToStream(_curContent, str);
   };
 
@@ -691,8 +774,8 @@ const instancePDF = ({ defaultSize } = {}) => {
 
   const measureText = ({ text, size }) => {
     const fontName = _curFont.userData.name;
-    const width = fontsMeasureText({ fontName, text, size });
-    return width;
+    const metrics = fontsMeasureText({ fontName, text, size });
+    return metrics;
   };
 
   init();
@@ -701,7 +784,9 @@ const instancePDF = ({ defaultSize } = {}) => {
     addPage,
     addImage,
     addCircle,
-    addLine,
+    addOval,
+    addPolygon,
+    addRectangle,
     addText,
     measureText,
     addFont,
