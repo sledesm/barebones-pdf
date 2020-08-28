@@ -45,8 +45,17 @@
 
 const { encodeUTF8 } = require("./io");
 const { measureText: fontsMeasureText } = require("./fonts");
+const { getColorStr } = require("./colors");
+const {
+  matrixMultiply,
+  matrixByPoint,
+  matrixIdentity,
+  matrixRotate,
+  matrixTranslate,
+  matrixScale,
+  matrixBox2Dst,
+} = require("./matrix");
 
-const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
 const SQUARE_PATH = [
   { x: -0.5, y: -0.5 },
   { x: 0.5, y: -0.5 },
@@ -67,7 +76,6 @@ const instancePDF = ({ defaultSize } = {}) => {
   let _curPage;
   let _curContent;
   let _curFont;
-  const _colorCache = {};
 
   const addObj = (lobj) => {
     const obj = lobj;
@@ -110,6 +118,26 @@ const instancePDF = ({ defaultSize } = {}) => {
   };
 
   const getObject = (name) => _model.objectMap[name];
+
+  const renderFragments = (fragments) => {
+    let totalLength = 0;
+    for (let i = 0; i < fragments.length; i++) {
+      const data = fragments[i];
+      totalLength += data.length;
+    }
+
+    const outputData = new Uint8Array(totalLength);
+    let offset = 0;
+    for (let i = 0; i < fragments.length; i++) {
+      const data = fragments[i];
+      for (let j = 0; j < data.length; j++) {
+        const value = data[j];
+        outputData[j + offset] = value;
+      }
+      offset += data.length;
+    }
+    return outputData;
+  };
 
   const render = () => {
     const fragments = [];
@@ -311,22 +339,7 @@ const instancePDF = ({ defaultSize } = {}) => {
     addXref();
     addTail(xRefOffset);
 
-    let totalLength = 0;
-    for (let i = 0; i < fragments.length; i++) {
-      const data = fragments[i];
-      totalLength += data.length;
-    }
-
-    const outputData = new Uint8Array(totalLength);
-    let offset = 0;
-    for (let i = 0; i < fragments.length; i++) {
-      const data = fragments[i];
-      for (let j = 0; j < data.length; j++) {
-        const value = data[j];
-        outputData[j + offset] = value;
-      }
-      offset += data.length;
-    }
+    const outputData = renderFragments(fragments);
     return outputData;
   };
 
@@ -367,6 +380,12 @@ const instancePDF = ({ defaultSize } = {}) => {
     }
     _curPage = page;
     _curContent = content;
+  };
+
+  const getCurrentContent = () => {
+    const stream = _curContent.stream;
+    const data = renderFragments(stream);
+    return data;
   };
 
   const addPage = (params) => {
@@ -428,10 +447,69 @@ const instancePDF = ({ defaultSize } = {}) => {
 
   let _imageIndex = 0;
 
-  const addImage = ({ name, size, resource }) => {
+  const addImage = ({ name, size, resource, format }) => {
+    const {
+      width,
+      height,
+    } = size;
     const imageHandle = `I${_imageIndex}`;
-
+    let addMaskImage=false;
+    let filter;
+    let imageMaskObj;
+    let resourceToUse=resource;
+    let resourceMaskToUse;
+    switch (format) {
+      case "jpg":
+        filter = "DCTDecode";
+        break;
+      // In the case of RGBA, we have to split into two images
+      // RGB image and Mask image (only the alpha channel)
+      case "RGBA":
+        addMaskImage=true;
+        resourceToUse=new Uint8Array(width*height*3);
+        resourceMaskToUse=new Uint8Array(width*height);
+        for (let i=0; i<width*height; i++){
+          const srcIndex=i*4;
+          const dstIndex=i*3;
+          const r=resource[srcIndex];
+          const g=resource[srcIndex+1];
+          const b=resource[srcIndex+2];
+          const a=resource[srcIndex+3];
+          if (a){
+            resourceToUse[dstIndex]=r;
+            resourceToUse[dstIndex+1]=g;
+            resourceToUse[dstIndex+2]=b;
+          }
+          else{
+            resourceToUse[dstIndex]=0;
+            resourceToUse[dstIndex+1]=0;
+            resourceToUse[dstIndex+2]=0;
+          }
+          resourceMaskToUse[i]=a;
+        }
+        break;
+      default:
+        throw new Error("only rawRGB or jpg file formats are supported");
+    }
     _imageIndex++;
+    if (addMaskImage){
+      imageMaskObj = addObj({
+        name:`${name}_mask`,
+        dictionary: {
+          Type: "XObject",
+          Subtype: "Image",
+          Width: width,
+          Height: height,
+          Colors:1,
+          Columns:width,
+          ColorSpace: "DeviceGray",
+          BitsPerComponent: 8,
+        },
+      });
+      addToStream(imageMaskObj,resourceMaskToUse);
+    }
+
+
     const imageObj = addObj({
       name,
       imageHandle,
@@ -440,11 +518,14 @@ const instancePDF = ({ defaultSize } = {}) => {
         Subtype: "Image",
         Width: size.width,
         Height: size.height,
+        SMask: imageMaskObj?{ type: "ref", value: imageMaskObj.ref }:undefined,
         ColorSpace: "DeviceRGB",
         BitsPerComponent: 8,
-        Filter: "DCTDecode",
+        Filter: filter,
       },
     });
+    addToStream(imageObj, resourceToUse);
+
     const resources = getObject("Resources");
     const xObjDict = resources.dictionary.XObject.value;
 
@@ -452,29 +533,7 @@ const instancePDF = ({ defaultSize } = {}) => {
       type: "ref",
       value: imageObj.ref,
     };
-    addToStream(imageObj, resource);
-  };
 
-  const matrixMultiply = (m1, m2) => {
-    const [a, b, c, d, e, f] = m1;
-    const [g, h, i, j, k, l] = m2;
-    return [
-      a * g + c * h,
-      b * g + d * h,
-      a * i + c * j,
-      b * i + d * j,
-      a * k + c * l + e,
-      b * k + d * l + f,
-    ];
-  };
-
-  const matrixByPoint = (m, p) => {
-    const [a, b, c, d, e, f] = m;
-    const { x, y } = p;
-    return {
-      x: a * x + c * y + e,
-      y: b * x + d * y + f,
-    };
   };
 
   const matrixToString = (matrix) => {
@@ -490,23 +549,6 @@ const instancePDF = ({ defaultSize } = {}) => {
     return str;
   };
 
-  const getColorStr = (color) => {
-    if (!color) {
-      return "";
-    }
-    let colorStr = _colorCache[color];
-    if (!colorStr) {
-      const colorNumber = Number.parseInt(color.slice(1), 16);
-      const r = ((colorNumber >> 16) & 0xff) / 255;
-      const g = ((colorNumber >> 8) & 0xff) / 255;
-      const b = (colorNumber & 0xff) / 255;
-
-      colorStr = ` ${r} ${g} ${b}`;
-      _colorCache[color] = colorStr;
-    }
-    return colorStr;
-  };
-
   const setFillColor = (color) => {
     const str = `${getColorStr(color)} rg`;
     addToStream(_curContent, str);
@@ -515,6 +557,32 @@ const instancePDF = ({ defaultSize } = {}) => {
   const setStrokeColor = (color) => {
     const str = `${getColorStr(color)} RG`;
     addToStream(_curContent, str);
+  };
+
+  const pushState = () => {
+    addToStream(_curContent, "\nq\n");
+  };
+
+  const popState = () => {
+    addToStream(_curContent, "\nQ\n");
+  };
+
+  const addToContent = (str, options = {}) => {
+    const { viewBox, dst } = options;
+    pushState();
+    if (viewBox && dst) {
+      const { cx, cy, width, height, angle = 0 } = dst;
+      const m = matrixBox2Dst(viewBox, {
+        cx,
+        cy,
+        width,
+        height,
+        angle: (angle * Math.PI) / 180,
+      });
+      addToStream(_curContent, ` ${matrixToString(m)}`);
+    }
+    addToStream(_curContent, str);
+    popState();
   };
 
   const n = (v) => {
@@ -564,20 +632,10 @@ const instancePDF = ({ defaultSize } = {}) => {
 
   const addOval = (cx, cy, width, height, alpha, stroke, fill) => {
     const angle = (alpha * Math.PI) / 180;
-    const matrixScale = [width, 0, 0, height, 0, 0];
-    const matrixRotate = [
-      Math.cos(angle),
-      Math.sin(angle),
-      -Math.sin(angle),
-      Math.cos(angle),
-      0,
-      0,
-    ];
-    const matrixTranslate = [1, 0, 0, 1, cx, cy];
-    const finalMatrix = matrixMultiply(
-      matrixTranslate,
-      matrixMultiply(matrixRotate, matrixScale)
-    );
+    const mS = matrixScale(width, height);
+    const mR = matrixRotate(angle);
+    const mT = matrixTranslate(cx, cy);
+    const finalMatrix = matrixMultiply(mT, matrixMultiply(mR, mS));
     const finalMatrixStr = matrixToString(finalMatrix);
     const maxScale = Math.max(width, height);
     const content = `\nq\n${1 / maxScale} w${finalMatrixStr}`;
@@ -588,22 +646,12 @@ const instancePDF = ({ defaultSize } = {}) => {
 
   const addRectangle = (cx, cy, width, height, alpha, stroke, fill) => {
     const angle = (alpha * Math.PI) / 180;
-    const strokeWidth = 1;
-    const matrixRotate = [
-      Math.cos(angle),
-      Math.sin(angle),
-      -Math.sin(angle),
-      Math.cos(angle),
-      0,
-      0,
-    ];
-    const matrixTranslate = [1, 0, 0, 1, cx, cy];
 
-    const matrixScale = [width, 0, 0, height, 0, 0];
-    const finalMatrix = matrixMultiply(
-      matrixTranslate,
-      matrixMultiply(matrixRotate, matrixScale)
-    );
+    const mR = matrixRotate(angle);
+    const mT = matrixTranslate(cx, cy);
+
+    const mS = matrixScale(width, height);
+    const finalMatrix = matrixMultiply(mT, matrixMultiply(mR, mS));
     addPolygon({
       path: SQUARE_PATH,
       matrix: finalMatrix,
@@ -614,7 +662,7 @@ const instancePDF = ({ defaultSize } = {}) => {
   };
 
   const addPolygon = ({
-    matrix = IDENTITY_MATRIX,
+    matrix = matrixIdentity(),
     path,
     closed,
     fill = false,
@@ -649,8 +697,27 @@ const instancePDF = ({ defaultSize } = {}) => {
     addToStream(_curContent, str);
   };
 
-  const paintImage = ({ matrix, imageKey, clipPath }) => {
-    const imageObj = getObject(imageKey);
+  const paintImage = ({ dst, name, clipPath }) => {
+    const {
+      cx: dstCx,
+      cy: dstCy,
+      width: dstWidth,
+      height: dstHeight,
+      angle: dstAngle,
+    } = dst;
+
+    const imageObj = getObject(name);
+
+    const matrix = matrixMultiply(
+      matrixTranslate(dstCx, dstCy),
+      matrixMultiply(
+        matrixRotate((dstAngle * Math.PI) / 180),
+        matrixMultiply(
+          matrixScale(dstWidth, dstHeight),
+          matrixTranslate(-0.5, -0.5)
+        )
+      )
+    );
 
     const imageHandle = imageObj.imageHandle;
 
@@ -667,8 +734,8 @@ const instancePDF = ({ defaultSize } = {}) => {
         },
       });
     }
-    let str = ` q${matrixToString(matrix)} /${imageHandle} Do Q`;
 
+    let str = ` q${matrixToString(matrix)} /${imageHandle} Do Q`;
     if (clipPath) {
       str += " Q\n";
     } else {
@@ -734,7 +801,6 @@ const instancePDF = ({ defaultSize } = {}) => {
     }
     const fontHandle = _curFont.handle;
     const str = `\nBT /${fontHandle} ${size} Tf\n${hOffset} ${vOffset} Td\n(${text}) Tj\nET\n`;
-    console.log(`adding TExt with string ${str}`);
     addToStream(_curContent, str);
   };
 
@@ -794,9 +860,13 @@ const instancePDF = ({ defaultSize } = {}) => {
     render,
     getModel,
     setCurrentPage,
+    getCurrentContent,
     setFillColor,
     setFont,
     setStrokeColor,
+    pushState,
+    popState,
+    addToContent,
   };
 };
 

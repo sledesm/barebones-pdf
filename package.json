@@ -4,7 +4,8 @@
   "description": "Simple barebones PDF library",
   "main": "index.js",
   "scripts": {
-    "test": "jest"
+    "test": "jest",
+    "test:debug": "export NODE_ENV=test && node --inspect-brk node_modules/.bin/jest --runInBand"
   },
   "repository": {
     "type": "git",
@@ -24,6 +25,11 @@
   "homepage": "https://github.com/sledesm/simple-pdf#readme",
   "dependencies": {
     "base64-arraybuffer": "^0.2.0",
-    "jest": "^26.2.2"
+    "jest": "^26.2.2",
+    "svg-parser": "^2.0.4"
+  },
+  "devDependencies": {
+    "fs-extra": "^9.0.1",
+    "upng-js": "^2.1.0"
   }
 }

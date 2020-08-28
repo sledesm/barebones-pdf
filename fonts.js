@@ -9,7 +9,6 @@ const n = (value)=>{
 }
 
 const parseFonts = (list) => {
-  console.log("parsing fonts");
   const result = {};
   for (let i = 0; i < list.length; i++) {
     const { name, resource } = list[i];
