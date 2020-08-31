@@ -1,5 +1,5 @@
 {
-  "name": "simple-pdf",
+  "name": "barebones-pdf",
   "version": "1.0.0",
   "description": "Simple barebones PDF library",
   "main": "index.js",
