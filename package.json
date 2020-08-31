@@ -28,9 +28,9 @@
   },
   "devDependencies": {
     "fs-extra": "^9.0.1",
-    "upng-js": "^2.1.0",
-    "jest": "^26.2.2",
-    "svg-parser": "^2.0.4"
+    "jest": "^26.4.2",
+    "svg-parser": "^2.0.4",
+    "upng-js": "^2.1.0"
   },
   "directories": {
     "test": "tests"
