@@ -1,2 +1,2 @@
-# simple-pdf
-Overly simple, dependency free pdf renderer for javascript
+# barebones-pdf
+Overly simple, dependency free pdf renderer for javascript.
