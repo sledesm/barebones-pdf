@@ -1,1 +1,1 @@
-module.exports=require('./simple-pdf');
+module.exports=require('./pdf');
