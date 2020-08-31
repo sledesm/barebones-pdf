@@ -17,7 +17,7 @@
     "browser",
     "node"
   ],
-  "author": "Santiago Ledesma",
+  "author": "Santiago Ledesma <sledesm@gmail.com>",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/sledesm/simple-pdf/issues"
