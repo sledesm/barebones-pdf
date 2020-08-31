@@ -31,5 +31,8 @@
   "devDependencies": {
     "fs-extra": "^9.0.1",
     "upng-js": "^2.1.0"
+  },
+  "directories": {
+    "test": "tests"
   }
 }
