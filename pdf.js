@@ -73,7 +73,6 @@ const instancePDF = ({ defaultSize } = {}) => {
 
   let _numPages = 0;
   let _fontCount = 0;
-  let _curPage;
   let _curContent;
   let _curFont;
 
@@ -382,11 +381,6 @@ const instancePDF = ({ defaultSize } = {}) => {
     _curContent = content;
   };
 
-  const getCurrentContent = () => {
-    const stream = _curContent.stream;
-    const data = renderFragments(stream);
-    return data;
-  };
 
   const addPage = (params) => {
     let size = params.size;
@@ -860,7 +854,6 @@ const instancePDF = ({ defaultSize } = {}) => {
     render,
     getModel,
     setCurrentPage,
-    getCurrentContent,
     setFillColor,
     setFont,
     setStrokeColor,
