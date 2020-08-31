@@ -106,3 +106,5 @@ dist
 sample-svg-output
 
 *.pdf
+
+convertCommits.sh
